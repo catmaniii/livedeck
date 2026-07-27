@@ -3,8 +3,9 @@ name: livedeck
 description: >-
   输出一个自包含、可翻页的 HTML 演示 deck(方向键翻页、全屏放映、#n 深链),并且能内嵌活的
   HTML 演示(动画 / 可交互图谱图表 / 实时组件 / 视频),靠 <iframe> 实现 —— 用于 .pptx 装不下动态
-  内容、又想要 PPT 式放映体验的场合。本 skill 独立工作、不依赖 pptx skill;需要真正的 .pptx 文件
-  (要 PowerPoint 兼容 / 可再编辑)时改用 Anthropic 官方 pptx skill —— 二者面向不同产物、互不替代。
+  内容、又想要 PPT 式放映体验的场合。本 skill 是 Anthropic 官方 pptx skill 的**配套扩展层**,不是独立
+  自足的 skill:它自己提供 HTML deck 的模板 / 放映引擎 / 浏览器截图 QA,但源素材摄取、初稿与设计、视觉 QA
+  方法论仍依赖 pptx skill,应与其配套使用。需要真正的 .pptx 文件时直接用 pptx skill。
 ---
 
 # LiveDeck — 可翻页 + 内嵌动态演示的 HTML 演示文稿
@@ -12,19 +13,26 @@ description: >-
 当用户想要**能像 PPT 一样翻页、并且能内嵌动画 / 可交互组件 / 实时图表**的演示时,输出一个自包含的
 HTML deck,而不是 .pptx。PPTX 无法嵌入活的 HTML;HTML deck 天生可以(用 `<iframe>`)。
 
-## 与官方 pptx skill 的关系(独立,不依赖)
+## 与官方 pptx skill 的关系(配套扩展,非独立自足)
 
-- **本 skill 独立工作,不依赖 pptx skill**:出"可翻页 HTML deck + 内嵌动态演示"的全部能力,都由本
-  skill 自带的 `html-deck-template.html`(模板 + 放映引擎)完成 —— 不 import、不引用、也不需要 pptx
-  skill 安装在场。缺了 pptx skill,本 skill 照常工作。
-- 模板与放映引擎均为**独立原创实现**,**不复制**官方 pptx skill 的任何内容。
-- 两者是**面向不同产物的兄弟 skill**,不是替代、也不是子集:
-  - 要**真正的 .pptx**(PowerPoint 兼容、可在 Office 里再编辑)→ 那是官方 **pptx skill** 的活,与本
-    skill 无关。
-  - 要**浏览器里翻页放映 + 内嵌活的 HTML**(动画 / 可交互图谱 / 实时组件)→ 用**本 skill**。
-- **唯一会用到 pptx skill 的,是上游、可选的一步**:当源材料是现成 `.pptx`、想把它转成 HTML deck 时,
-  先用 pptx skill 读取 / 抽取其内容,再用本 skill 重排放映 —— 这是一次性的内容导入,**不是运行期依赖**;
-  从零写 deck 时完全用不到它。
+本 skill 是 **Anthropic 官方 pptx skill 的配套扩展层**,负责"HTML 翻页 deck + 内嵌动态演示"这一层;
+完整的"从素材到成品"工作流仍依赖 pptx skill,**建议二者一起安装使用**。
+
+**本 skill 自己提供(HTML 层,不调 pptx 脚本):**
+- `html-deck-template.html` —— 1280×720 模板 + 放映引擎 + HUD(独立原创,不复制 pptx skill 内容)。
+- 交付形态:`srcdoc` 内联成自包含单文件。
+- 渲染 / 视觉 QA:用浏览器(`msedge --headless --screenshot`),而非 pptx 的 `soffice`→pdf→`pdftoppm`。
+
+**仍依赖 pptx skill 的部分(真实端到端流程里会用到):**
+- **源素材摄取**:源材料常是 `.pptx` / PDF,用 pptx skill 的 `python -m markitdown` / `office/unpack.py`
+  抽成文本再重排。
+- **初稿与设计**:实践中常先用 pptx skill 的 `pptxgenjs` 出一版结构 / 设计稿,再据此改写成 HTML deck。
+- **设计规范 + 视觉 QA 方法论**:配色 / 字体 / 版式禁忌,以及"假设有 bug、用 subagent 新眼睛逐页查、
+  改完再验"这套纪律,均以 pptx skill 的 `SKILL.md` 为准。
+
+**边界**:纯粹"把已写好的 HTML 渲染成可翻页 deck 并内嵌演示",可只用本 skill、不调 pptx 脚本;但只要涉及
+**导入素材、出结构初稿、或走完整设计 / QA 纪律**,就需要 pptx skill 在场。需要真正的 `.pptx` 产物时直接
+用 pptx skill。
 
 ## 什么时候用它
 

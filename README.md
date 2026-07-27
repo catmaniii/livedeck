@@ -16,16 +16,19 @@
 复制 `html-deck-template.html`,每张幻灯片写成一个 `<section class="slide">…</section>`,顺序即放映顺序;
 要动态演示就用 `<iframe>` 嵌(交付时把 `src` 转成内联 `srcdoc` 做成自包含单文件)。详见 `SKILL.md`。
 
-## 与官方 pptx skill 的关系(独立,不依赖)
+## 与官方 pptx skill 的关系(配套扩展,非独立自足)
 
-**本 skill 独立工作,不依赖 pptx skill。** 出"可翻页 HTML deck + 内嵌动态演示"的全部能力,都由本 skill
-自带的 `html-deck-template.html`(模板 + 放映引擎)完成 —— 不 import、不引用官方 pptx skill,缺了它也照常
-工作;模板与引擎均为独立原创实现,不复制其任何内容。
+本 skill 是 **Anthropic 官方 pptx skill 的配套扩展层**,负责"HTML 翻页 deck + 内嵌动态演示"这一层,
+**建议与官方 pptx skill 一起安装使用**。
 
-两者是**面向不同产物的兄弟 skill**,不是替代、也不是子集:需要真正的 `.pptx`(PowerPoint 兼容 / 可再编辑)
-用官方 pptx skill;需要浏览器里翻页放映 + 内嵌活 HTML 用本 skill。**唯一会用到 pptx skill 的是上游、可选的
-一步**——源材料是现成 `.pptx`、想转成 HTML deck 时,先用 pptx skill 抽取内容再用本 skill 重排;从零写 deck
-完全用不到它。
+- **本 skill 自己提供**(HTML 层,不调 pptx 脚本):`html-deck-template.html`(模板 + 放映引擎,独立原创、
+  不复制 pptx skill 内容)、`srcdoc` 自包含内联、以及用浏览器(`msedge --headless --screenshot`)做渲染 /
+  视觉 QA。
+- **仍依赖 pptx skill**:① 源素材摄取 —— `.pptx` / PDF 用 `markitdown` / `unpack` 抽文本;② 常先用
+  `pptxgenjs` 出结构 / 设计初稿再改写成 HTML;③ 设计规范与"假设有 bug、subagent 逐页查"的视觉 QA 方法论,
+  以 pptx skill 的 `SKILL.md` 为准。
+- **边界**:只"把写好的 HTML 渲染成可翻页 deck"可只用本 skill;涉及导入素材、出初稿、或走完整设计 / QA
+  纪律时需要 pptx skill 在场。需要真正的 `.pptx` 产物时直接用 pptx skill。
 
 ## 安装
 
