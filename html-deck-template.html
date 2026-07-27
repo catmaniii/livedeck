@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<!-- ⚠️ 必留:声明 light,否则浏览器 auto-dark-mode 会把白色幻灯片整体压暗 -->
+<meta name="color-scheme" content="light" />
+<title>HTML Deck 模板</title>
+<style>
+  :root{
+    color-scheme: light;                 /* ⚠️ 必留,同上 */
+    --ink:#1b2a3a; --muted:#5b6b7c; --faint:#8595a5; --line:#dce4ee;
+    --card:#f4f7fb; --card2:#eef3f9; --paper:#ffffff;
+    --blue:#1f4b82; --blueSoft:#e8f0fb; --teal:#0e9e8a; --tealDark:#0a5a4e; --tealSoft:#e2f4f0;
+    --amber:#c6851f; --amberInk:#7a5310; --amberSoft:#fbf1dd;
+    --red:#c0453b; --redSoft:#fbe9e7; --green:#2f8f5b; --gray:#64748b;
+    --backdrop:#0d1420;                  /* 幻灯片外的暗色衬底 */
+    --fdisp:"Segoe UI Semibold","PingFang SC","Microsoft YaHei","Segoe UI",system-ui,sans-serif;
+    --fbody:"Segoe UI","PingFang SC","Microsoft YaHei","Noto Sans SC",system-ui,sans-serif;
+    --fmono:ui-monospace,"Cascadia Mono","Consolas",monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%;background:var(--backdrop);overflow:hidden;font-family:var(--fbody);color:var(--ink)}
+  /* 舞台:固定 1280×720 设计尺寸,JS 等比缩放铺满视口(letterbox) */
+  #stage{position:absolute;left:50%;top:50%;width:1280px;height:720px;transform-origin:center center}
+  .slide{position:absolute;inset:0;background:var(--paper);display:none;overflow:hidden;opacity:1}
+  .slide.current{display:block}
+  /* 入场动画只动 transform、不动 opacity —— 避免个别环境动画不推进时幻灯片卡在透明 */
+  .slide.anim{animation:slidein .34s ease}
+  @keyframes slidein{from{transform:translateX(18px)}to{transform:none}}
+  .pad{position:absolute;inset:0;padding:52px 64px 58px}
+  .pg{position:absolute;right:26px;bottom:18px;font-family:var(--fmono);font-size:12px;color:var(--faint)}
+  .foot{position:absolute;left:64px;bottom:18px;font-size:11px;color:var(--faint);letter-spacing:.04em}
+
+  .kicker{font-family:var(--fdisp);font-size:14px;font-weight:700;letter-spacing:.14em;color:var(--kc,var(--teal));text-transform:uppercase;margin-bottom:12px;display:flex;align-items:center;gap:10px}
+  .kicker::before{content:"";width:26px;height:3px;border-radius:2px;background:var(--kc,var(--teal))}
+  h1.t{font-family:var(--fdisp);font-size:34px;font-weight:800;line-height:1.18;margin-bottom:6px}
+  .sub{font-size:15px;color:var(--muted);line-height:1.5;margin-top:8px;max-width:60ch}
+  .lead{font-size:16px;line-height:1.6}
+
+  .cols{display:grid;gap:22px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px 20px}
+  .card h3{font-family:var(--fdisp);font-size:17px;font-weight:800;margin-bottom:8px;display:flex;align-items:center;gap:9px}
+  .card p{font-size:13.5px;color:var(--muted);line-height:1.62}
+  .chip{display:inline-flex;align-items:center;gap:6px;font-family:var(--fmono);font-size:11px;font-weight:700;padding:3px 9px;border-radius:999px}
+  .dot{width:9px;height:9px;border-radius:50%;flex-shrink:0;display:inline-block}
+  .muted{color:var(--muted)}
+
+  table.grid{width:100%;border-collapse:separate;border-spacing:0;font-size:13.5px}
+  table.grid th,table.grid td{text-align:left;padding:11px 14px;vertical-align:top;border-bottom:1px solid var(--line)}
+  table.grid thead th{background:var(--blue);color:#fff;font-family:var(--fdisp);font-weight:700;font-size:13px}
+  table.grid thead th:first-child{border-top-left-radius:11px}
+  table.grid thead th:last-child{border-top-right-radius:11px}
+  table.grid tbody tr:nth-child(even){background:var(--card)}
+  table.grid td:first-child{font-weight:700;color:var(--blue)}
+
+  .bars{display:flex;flex-direction:column;gap:14px}
+  .bar-row{display:grid;grid-template-columns:110px 1fr auto;align-items:center;gap:12px}
+  .bar-lab{font-size:13px;font-weight:700;text-align:right}
+  .bar-track{height:26px;background:var(--card2);border-radius:7px;overflow:hidden}
+  .bar-fill{height:100%;border-radius:7px}
+  .bar-val{font-family:var(--fmono);font-size:13px;font-weight:700;min-width:56px}
+
+  /* 动态演示:内嵌活的 HTML(图表/动画/可交互组件)。同目录放好被嵌文件即可,file:// 下 iframe 正常加载 */
+  .demo-wrap{position:absolute;inset:118px 64px 58px;border:1px solid var(--line);border-radius:14px;overflow:hidden;box-shadow:0 8px 24px -14px rgba(20,40,60,.3)}
+  .demo-wrap iframe{width:100%;height:100%;border:0;display:block;background:#fff}
+
+  /* fragment:同一页内按空格/→ 逐步显现 */
+  .fragment{opacity:0;transform:translateY(6px);transition:opacity .35s ease,transform .35s ease}
+  .fragment.shown{opacity:1;transform:none}
+
+  /* HUD */
+  #hud{position:fixed;left:0;right:0;bottom:0;height:4px;background:rgba(255,255,255,.08);z-index:30}
+  #prog{height:100%;width:0;background:linear-gradient(90deg,var(--teal),var(--blue));transition:width .3s ease}
+  .navbtn{position:fixed;top:50%;transform:translateY(-50%);width:44px;height:44px;border-radius:50%;border:0;background:rgba(255,255,255,.10);color:#fff;font-size:20px;cursor:pointer;z-index:31;display:flex;align-items:center;justify-content:center}
+  .navbtn:hover{background:rgba(255,255,255,.22)}
+  #pv{left:16px} #nx{right:16px}
+  #counter{position:fixed;right:16px;top:14px;z-index:31;font-family:var(--fmono);font-size:12px;color:rgba(255,255,255,.75);background:rgba(0,0,0,.28);padding:4px 10px;border-radius:999px}
+  #hint{position:fixed;left:16px;top:14px;z-index:31;font-size:11px;color:rgba(255,255,255,.5)}
+  @media (max-width:700px){#pv,#nx{display:none}}
+</style>
+</head>
+<body>
+<div id="stage">
+
+  <!-- ===== 幻灯片 1:标题页 ===== -->
+  <section class="slide">
+    <div class="pad" style="display:flex;flex-direction:column;justify-content:center">
+      <div class="kicker">副标题 / KICKER</div>
+      <h1 class="t" style="font-size:42px">主标题写在这里<br/>支持两行</h1>
+      <div class="sub" style="font-size:17px;margin-top:16px">副说明一句话,交代这份演示是什么、给谁看。</div>
+      <div style="margin-top:30px;display:flex;gap:10px">
+        <span class="chip" style="background:var(--tealSoft);color:var(--tealDark)"><span class="dot" style="background:var(--teal)"></span>标签一</span>
+        <span class="chip" style="background:var(--blueSoft);color:var(--blue)"><span class="dot" style="background:var(--blue)"></span>标签二</span>
+      </div>
+    </div>
+    <div class="foot">页脚 · 可放机构/日期</div>
+  </section>
+
+  <!-- ===== 幻灯片 2:两栏卡片 + fragment 逐步显现 ===== -->
+  <section class="slide">
+    <div class="pad">
+      <div class="kicker" style="--kc:var(--teal)">一 · 章节</div>
+      <h1 class="t">两栏要点(按 → 逐个显现)</h1>
+      <div class="cols" style="grid-template-columns:1fr 1fr;margin-top:20px">
+        <div class="card fragment" style="border-left:4px solid var(--red)"><h3><span class="dot" style="background:var(--red)"></span>要点 A</h3><p>说明文字。fragment 元素初始隐藏,翻页键逐个点亮,最后一个显现后再 → 才换页。</p></div>
+        <div class="card fragment" style="border-left:4px solid var(--amber)"><h3><span class="dot" style="background:var(--amber)"></span>要点 B</h3><p>说明文字。不需要分步就删掉 class="fragment"。</p></div>
+      </div>
+    </div>
+    <div class="pg">2</div>
+  </section>
+
+  <!-- ===== 幻灯片 3:表格 ===== -->
+  <section class="slide">
+    <div class="pad">
+      <div class="kicker" style="--kc:var(--gray)">二 · 章节</div>
+      <h1 class="t">对照表</h1>
+      <table class="grid" style="margin-top:18px">
+        <thead><tr><th style="width:22%">列一</th><th style="width:38%">列二</th><th>列三</th></tr></thead>
+        <tbody>
+          <tr><td>行首(自动蓝色加粗)</td><td>单元格内容</td><td>可用 &lt;b&gt; 强调</td></tr>
+          <tr><td>第二行</td><td>偶数行自动浅底</td><td>……</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="pg">3</div>
+  </section>
+
+  <!-- ===== 幻灯片 4:条形图(纯 CSS,无需库) ===== -->
+  <section class="slide">
+    <div class="pad">
+      <div class="kicker" style="--kc:var(--teal)">三 · 数据</div>
+      <h1 class="t">条形对比</h1>
+      <div class="muted" style="font-size:13px;margin:14px 0 12px;font-weight:700">副标题:单位 / 越小越好之类</div>
+      <div class="bars" style="max-width:640px">
+        <div class="bar-row"><div class="bar-lab">项目 A</div><div class="bar-track"><div class="bar-fill" style="width:38%;background:var(--teal)"></div></div><div class="bar-val" style="color:var(--tealDark)">10.0</div></div>
+        <div class="bar-row"><div class="bar-lab">项目 B</div><div class="bar-track"><div class="bar-fill" style="width:100%;background:#9aa6b2"></div></div><div class="bar-val muted">26.1</div></div>
+      </div>
+    </div>
+    <div class="pg">4</div>
+  </section>
+
+  <!-- ===== 幻灯片 5:动态演示(内嵌活的 HTML/图表/动画/可交互组件) ===== -->
+  <section class="slide">
+    <div class="pad" style="padding-bottom:0">
+      <div class="kicker" style="--kc:var(--teal)">四 · 动态演示</div>
+      <h1 class="t">内嵌一个活的 HTML(iframe)</h1>
+    </div>
+    <!-- 把 your-demo.html 放到本文件同目录;可交互组件/动画/图表都能这样嵌 -->
+    <div class="demo-wrap"><iframe src="your-demo.html" title="演示" loading="eager"></iframe></div>
+    <div class="foot">提示:同目录放好被嵌文件即可,离线 file:// 也能加载</div>
+  </section>
+
+</div>
+
+<!-- HUD -->
+<div id="counter">1 / 5</div>
+<div id="hint">← → 翻页 · F 全屏 · Home/End</div>
+<button class="navbtn" id="pv" aria-label="上一页">‹</button>
+<button class="navbtn" id="nx" aria-label="下一页">›</button>
+<div id="hud"><div id="prog"></div></div>
+
+<script>
+/* 自包含放映引擎:方向键/空格/PageUp-Down/Home/End 翻页,F 全屏,‹›按钮,触摸滑动,
+   #n 深链,fragment 逐步显现。无外部依赖。改幻灯片只需增删 <section class="slide">。 */
+(function(){
+  var stage=document.getElementById('stage');
+  var slides=[].slice.call(document.querySelectorAll('.slide'));
+  var N=slides.length, idx=0;
+  var counter=document.getElementById('counter'), prog=document.getElementById('prog');
+  function fit(){ var s=Math.min(window.innerWidth/1280, window.innerHeight/720); stage.style.transform='translate(-50%,-50%) scale('+s+')'; }
+  function frags(sl){ return [].slice.call(sl.querySelectorAll('.fragment')); }
+  function show(i, revealAll){
+    idx=Math.max(0, Math.min(N-1, i));
+    slides.forEach(function(s,k){ var cur=k===idx; s.classList.toggle('current', cur); if(cur){ s.classList.remove('anim'); void s.offsetWidth; s.classList.add('anim'); } });
+    frags(slides[idx]).forEach(function(f){ f.classList.toggle('shown', !!revealAll); });
+    counter.textContent=(idx+1)+' / '+N;
+    prog.style.width=(N>1?(idx/(N-1)*100):100)+'%';
+    var h='#'+(idx+1); if(location.hash!==h) history.replaceState(null,'',h);
+  }
+  function next(){ var f=frags(slides[idx]).filter(function(x){return !x.classList.contains('shown');}); if(f.length){ f[0].classList.add('shown'); return; } if(idx<N-1) show(idx+1,false); }
+  function prev(){ var f=frags(slides[idx]).filter(function(x){return x.classList.contains('shown');}); if(f.length){ f[f.length-1].classList.remove('shown'); return; } if(idx>0) show(idx-1,true); }
+  function toggleFS(){ if(!document.fullscreenElement){ (document.documentElement.requestFullscreen||function(){}).call(document.documentElement); } else { document.exitFullscreen&&document.exitFullscreen(); } }
+  document.addEventListener('keydown', function(e){
+    if(e.key==='ArrowRight'||e.key==='PageDown'||e.key===' '||e.key==='Spacebar'){ e.preventDefault(); next(); }
+    else if(e.key==='ArrowLeft'||e.key==='PageUp'){ e.preventDefault(); prev(); }
+    else if(e.key==='Home'){ e.preventDefault(); show(0,false); }
+    else if(e.key==='End'){ e.preventDefault(); show(N-1,true); }
+    else if(e.key==='f'||e.key==='F'){ toggleFS(); }
+  });
+  document.getElementById('nx').addEventListener('click', next);
+  document.getElementById('pv').addEventListener('click', prev);
+  var tx=0,ty=0;
+  document.addEventListener('touchstart',function(e){ tx=e.touches[0].clientX; ty=e.touches[0].clientY; },{passive:true});
+  document.addEventListener('touchend',function(e){ var dx=e.changedTouches[0].clientX-tx, dy=e.changedTouches[0].clientY-ty; if(Math.abs(dx)>60 && Math.abs(dx)>Math.abs(dy)){ dx<0?next():prev(); } },{passive:true});
+  window.addEventListener('hashchange', function(){ var h=parseInt(location.hash.slice(1)); if(!isNaN(h)&&h-1!==idx) show(h-1,true); });
+  window.addEventListener('resize', fit);
+  fit();
+  var start=parseInt(location.hash.slice(1)); show(!isNaN(start)?start-1:0, false);
+})();
+</script>
+</body>
+</html>
