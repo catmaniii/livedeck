@@ -3,8 +3,8 @@ name: livedeck
 description: >-
   输出一个自包含、可翻页的 HTML 演示 deck(方向键翻页、全屏放映、#n 深链),并且能内嵌活的
   HTML 演示(动画 / 可交互图谱图表 / 实时组件 / 视频),靠 <iframe> 实现 —— 用于 .pptx 装不下动态
-  内容、又想要 PPT 式放映体验的场合。需要真正的 .pptx 文件(要 PowerPoint 兼容 / 可再编辑)时,
-  改用 Anthropic 官方 pptx skill;本 skill 与它可并存、互不替代。
+  内容、又想要 PPT 式放映体验的场合。本 skill 独立工作、不依赖 pptx skill;需要真正的 .pptx 文件
+  (要 PowerPoint 兼容 / 可再编辑)时改用 Anthropic 官方 pptx skill —— 二者面向不同产物、互不替代。
 ---
 
 # LiveDeck — 可翻页 + 内嵌动态演示的 HTML 演示文稿
@@ -12,13 +12,19 @@ description: >-
 当用户想要**能像 PPT 一样翻页、并且能内嵌动画 / 可交互组件 / 实时图表**的演示时,输出一个自包含的
 HTML deck,而不是 .pptx。PPTX 无法嵌入活的 HTML;HTML deck 天生可以(用 `<iframe>`)。
 
-## 与官方 pptx skill 的关系(引用,不替代)
+## 与官方 pptx skill 的关系(独立,不依赖)
 
-- **要真正的 .pptx**(PowerPoint 兼容、可在 Office 里再编辑、走模板)→ 用 **Anthropic 官方 pptx skill**。
-- **要浏览器里翻页放映 + 内嵌活的 HTML**(动画 / 可交互图谱 / 实时组件)→ 用**本 skill**。
-- 两者可并存:可先用官方 pptx skill 出一版静态 .pptx,再用本 skill 做带动态演示的 HTML 版。
-- 本 skill 的模板与放映引擎均为独立原创实现,**不复制**官方 pptx skill 的任何内容,仅在需要 .pptx 时
-  指向它。
+- **本 skill 独立工作,不依赖 pptx skill**:出"可翻页 HTML deck + 内嵌动态演示"的全部能力,都由本
+  skill 自带的 `html-deck-template.html`(模板 + 放映引擎)完成 —— 不 import、不引用、也不需要 pptx
+  skill 安装在场。缺了 pptx skill,本 skill 照常工作。
+- 模板与放映引擎均为**独立原创实现**,**不复制**官方 pptx skill 的任何内容。
+- 两者是**面向不同产物的兄弟 skill**,不是替代、也不是子集:
+  - 要**真正的 .pptx**(PowerPoint 兼容、可在 Office 里再编辑)→ 那是官方 **pptx skill** 的活,与本
+    skill 无关。
+  - 要**浏览器里翻页放映 + 内嵌活的 HTML**(动画 / 可交互图谱 / 实时组件)→ 用**本 skill**。
+- **唯一会用到 pptx skill 的,是上游、可选的一步**:当源材料是现成 `.pptx`、想把它转成 HTML deck 时,
+  先用 pptx skill 读取 / 抽取其内容,再用本 skill 重排放映 —— 这是一次性的内容导入,**不是运行期依赖**;
+  从零写 deck 时完全用不到它。
 
 ## 什么时候用它
 
