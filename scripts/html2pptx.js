@@ -66,7 +66,7 @@ function mapFont(cssFamily, text, override) {
 
 /* ── 参数 ── */
 const argv = process.argv.slice(2);
-const opt = { slack: 8, font: null, chrome: null, keep: false };
+const opt = { slack: 8, font: null, chrome: null, keep: false, svg: 'raster' };
 const pos = [];
 for (const a of argv) {
   const m = /^--([a-z]+)(?:=(.*))?$/.exec(a);
@@ -74,10 +74,12 @@ for (const a of argv) {
   else pos.push(a);
 }
 if (!pos.length) {
-  console.error('用法: node html2pptx.js <deck.html> [out.pptx] [--slack=8] [--font="微软雅黑"] [--chrome=<path>] [--keep]');
+  console.error('用法: node html2pptx.js <deck.html> [out.pptx] [--slack=8] [--font="微软雅黑"]');
+  console.error('             [--svg=raster|embed] [--chrome=<path>] [--dumpjson=m.json] [--keep]');
   process.exit(2);
 }
 opt.slack = parseFloat(opt.slack) || 0;
+const SVG_SCALE = 3;   // 内联 SVG 栅格化倍率,3× 足够清晰又不至于文件太大
 const srcPath = path.resolve(pos[0]);
 const outPath = path.resolve(pos[1] || srcPath.replace(/\.html?$/i, '') + '.pptx');
 
@@ -101,8 +103,12 @@ function findChrome() {
 function measure() {
   const html = fs.readFileSync(srcPath, 'utf8');
   const script = fs.readFileSync(path.join(__dirname, 'measure.js'), 'utf8');
-  const injected = html.replace(/<\/body>/i, `<script>\n${script}\n</script>\n</body>`);
-  if (injected === html) throw new Error('deck 里找不到 </body>,不像 livedeck 模板');
+  // 必须注入**最后一个** </body>。交付形态的 deck 会把被嵌演示内联进 srcdoc,
+  // 那些 HTML 自带 </body>,且在 srcdoc 属性里是字面文本 —— 注入第一个会掉进 iframe,
+  // 脚本在 iframe 里跑,顶层页面拿不到任何数据。
+  const last = html.toLowerCase().lastIndexOf('</body>');
+  if (last < 0) throw new Error('deck 里找不到 </body>,不像 livedeck 模板');
+  const injected = html.slice(0, last) + `<script>\n${script}\n</script>\n` + html.slice(last);
 
   // 临时文件必须与原 deck 同目录:iframe src / <img src> 都是相对路径
   const tmp = path.join(path.dirname(srcPath), `.h2p-${process.pid}.html`);
@@ -168,7 +174,17 @@ function build(data) {
     slide.background = { color: sd.bg };
     (sd.warnings || []).forEach(w => warnings.push(w));
 
-    for (const it of sd.items) {
+    // 分层:形状 → 图片 → 表格/占位 → 文字。
+    // 必须这么排。文档序里,行内 <span> 的高亮背景排在父段落文字**之后**,
+    // 照原序写进 pptx 就会把已经画好的字盖掉(HTML 里背景永远在文字之下)。
+    // 同一层内保持文档序(sort 稳定),层间用 rank 拉开。
+    const RANK = { shape: 0, image: 1, svg: 1, table: 2, unsupported: 2, text: 3 };
+    const ordered = sd.items
+      .map((it, i) => ({ it, i }))
+      .sort((a, b) => (RANK[a.it.kind] - RANK[b.it.kind]) || (a.i - b.i))
+      .map(x => x.it);
+
+    for (const it of ordered) {
       try {
         if (it.kind === 'shape') { addShape(pres, slide, it); stats.shape++; }
         else if (it.kind === 'text') { addText(slide, it); stats.text++; }
@@ -246,7 +262,18 @@ function addText(slide, it) {
 
 function addTable(slide, it) {
   const rows = it.rows.map(r => r.cells.map(c => ({
-    text: c.text,
+    // 格内富文本:一个单元格里可能有不同颜色/粗细的片段(彩色 ✓/✗ 就是),
+    // 压成单一 text 会把这些全丢掉
+    text: (c.runs && c.runs.length > 1)
+      ? c.runs.map(x => ({
+        text: x.text,
+        options: {
+          bold: x.bold, italic: x.italic, color: x.color,
+          fontSize: PT(x.size), fontFace: mapFont(x.font, x.text, opt.font),
+          breakLine: x.breakLine || undefined
+        }
+      }))
+      : c.text,
     options: {
       bold: c.bold, color: c.color, fontSize: PT(c.size),
       fontFace: mapFont(c.font, c.text, opt.font),
@@ -281,11 +308,47 @@ function addImage(slide, it) {
   slide.addImage(o);
 }
 
+// 内联 <svg> 默认**自己用 Chrome 栅格化成 PNG** 再嵌。
+// 原因:pptxgenjs 在 Node 里没有栅格化能力,走 addImage(*.svg) 时会按 OOXML 的
+// "PNG 兜底 + SVG 扩展"惯例占两个 part,却把 **同一份 SVG 字节原样写进那个 .png**
+// —— 产出一个声明为 image/png、内容却是 SVG 的 part(实测两份文件字节完全相同)。
+// 靠这个兜底渲染的阅读器会画歪(LibreOffice 实测流程图叠字)。
+// SVG 在 pptx 里横竖都是不可编辑的图片,那不如给一张 3× 的真 PNG,到哪都画对。
+// 想保留矢量就传 --svg=embed,但要接受上面那个坑。
 function addSvg(slide, it, dir, si) {
   fs.mkdirSync(dir, { recursive: true });
-  const f = path.join(dir, `s${si + 1}-${Math.abs(hash(it.markup))}.svg`);
-  fs.writeFileSync(f, it.markup, 'utf8');
-  slide.addImage({ path: f, x: IN(it.x), y: IN(it.y), w: IN(it.w), h: IN(it.h) });
+  const base = `s${si + 1}-${Math.abs(hash(it.markup))}`;
+  const o = { x: IN(it.x), y: IN(it.y), w: IN(it.w), h: IN(it.h) };
+
+  if (opt.svg === 'embed') {
+    const f = path.join(dir, base + '.svg');
+    fs.writeFileSync(f, it.markup, 'utf8');
+    slide.addImage({ ...o, path: f });
+    return;
+  }
+
+  const png = path.join(dir, base + '.png');
+  rasterizeSvg(it.markup, Math.max(1, Math.round(it.w)), Math.max(1, Math.round(it.h)), png);
+  slide.addImage({ ...o, path: png });
+}
+
+function rasterizeSvg(markup, w, h, outPng) {
+  const wrapper = outPng.replace(/\.png$/, '.wrap.html');
+  fs.writeFileSync(wrapper,
+    '<!doctype html><meta charset="utf-8"><meta name="color-scheme" content="light">' +
+    `<style>html,body{margin:0;padding:0;background:transparent}svg{display:block;width:${w}px;height:${h}px}</style>` +
+    markup, 'utf8');
+  try {
+    execFileSync(findChrome(), [
+      '--headless', '--disable-gpu', '--no-sandbox', '--hide-scrollbars',
+      `--window-size=${w},${h}`, `--force-device-scale-factor=${SVG_SCALE}`,
+      '--default-background-color=00000000', '--virtual-time-budget=3000',
+      `--screenshot=${outPng}`, 'file:///' + wrapper.replace(/\\/g, '/')
+    ], { stdio: 'ignore' });
+    if (!fs.existsSync(outPng)) throw new Error('Chrome 没有产出 PNG');
+  } finally {
+    try { fs.unlinkSync(wrapper); } catch (e) { }
+  }
 }
 function hash(s) { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return h; }
 
@@ -309,6 +372,11 @@ function addPlaceholder(pres, slide, it) {
 (async function main() {
   console.log(`量取版面: ${path.basename(srcPath)}`);
   const data = measure();
+  // 排查用:把量出来的中间数据落盘,能直接看到每个条目的 sel / 坐标 / runs
+  if (opt.dumpjson) {
+    fs.writeFileSync(String(opt.dumpjson), JSON.stringify(data, null, 1), 'utf8');
+    console.log(`  中间数据已写入 ${opt.dumpjson}`);
+  }
   console.log(`  ${data.slides.length} 页,设计框 ${data.designW}×${data.designH}(= ${data.designW / PX_PER_IN}″×${data.designH / PX_PER_IN}″)`);
 
   const { pres, stats, warnings } = build(data);

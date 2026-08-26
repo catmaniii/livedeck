@@ -122,7 +122,9 @@ x/y/w/h。所以先让无头 Chrome 排完版,再注入 `scripts/measure.js`,用
 ```
 
 参数:`--slack=8`(多行文本的换行富余量,px)、`--font="微软雅黑"`(强制统一字体)、
-`--chrome=<path>`、`--keep`(保留注入后的临时 HTML 便于排查)。
+`--svg=raster|embed`(内联 SVG 默认自己用 Chrome 栅格化成 3× PNG,见下)、`--chrome=<path>`、
+`--dumpjson=m.json`(把量出来的中间数据落盘,排查时能直接看每个条目的 sel / 坐标 / runs)、
+`--keep`(保留注入后的临时 HTML)。
 
 ### pptx 兼容子集(想要可编辑就得守)
 
@@ -131,20 +133,24 @@ deck 照常写,但**打算转 pptx 的页**避开下面这些 —— 它们在 O
 | 别用 | 原因 / 替代 |
 |---|---|
 | `box-shadow`、`filter`、`backdrop-filter`、`mix-blend-mode` | 不映射,直接丢 |
-| CSS 渐变背景(`linear-gradient` 等) | pptxgenjs 不支持渐变填充;要渐变就放一张渐变图 |
+| CSS 渐变背景(`linear-gradient` 等) | pptxgenjs 不支持渐变填充。转换器会**压平成各色标的平均色**并报 warning;真要渐变就放一张渐变图 |
 | `::before` / `::after` 里放**文字** | 伪元素没有 DOM 节点,量不到。只有 flex 容器里**带固定宽高和背景的装饰条**(如 `.kicker::before`)被支持,其余记 warning 跳过 |
 | 自定义 web font(`@font-face`) | pptx 不内嵌字体,到别人机器上会被替换;用系统字体栈 |
-| `transform: rotate / skew` | 不映射 |
+| `transform: rotate / skew` | 不映射,按未变换绘制(斜着的图章会变正),有 warning |
 | `position:sticky`、滚动容器 | 幻灯片没有滚动这个概念 |
 | **把文字画进 `<svg>` 里** | 整块变图片,改字得回头改 HTML。见下方降级三层 |
 
-另外两条会**静默变形**,要特别知道:
+还有三条**必须知道**的:
 
 - **被 `overflow:hidden` 遮住的溢出**,在 pptx 里会真的被裁掉。转换器已加出框检查,超出 1280×720 一律报
   warning —— 别忽略。
 - **浏览器里只有一行的文字,转换时会被设成"禁止换行"**。因为 PowerPoint 的字体度量只要比 Chrome 宽一点点
   就会折出第二行,实测模板页脚正是这样被折断并切出页底的。副作用是那行字在 pptx 里可以越出自己的框,
   这是有意为之。
+- **内联 `<svg>` 默认被栅格化成 3× PNG**,不是原样嵌入。原因是 pptxgenjs 在 Node 里没有栅格化能力,
+  走 `addImage(*.svg)` 会按 OOXML 惯例占"PNG 兜底 + SVG"两个 part,却把**同一份 SVG 字节原样写进
+  那个 `.png`** —— 产出一个声明 `image/png`、内容是 SVG 的 part,靠它渲染的阅读器会画歪。
+  SVG 在 pptx 里横竖不可编辑,给一张画得对的 PNG 更划算。要矢量就传 `--svg=embed`,并接受这个坑。
 
 ### 动态内容的三层降级(转 pptx 前先想清楚)
 
@@ -171,6 +177,8 @@ pdftoppm -jpeg -r 150 out.pdf slide          # 或用 PyMuPDF 逐页出图
 - 文字有没有**多折一行**或被裁(字体度量差异的典型症状)。
 - 卡片 / 色块的位置、圆角、单边强调条对不对。
 - 表格列宽、表头底色、隔行浅底;**圆角表头在 pptx 里会变直角**,已知损失。
+- **有没有整块内容凭空消失**(白字落白底最常见,来源是渐变背景;转换器现在会报 warning,但别只信它)。
+- **文字有没有被色块盖住**(z 序问题,转换器已按 形状→图片→表格→文字 分层,异常设计仍可能翻车)。
 - 控制台那几条 warning 一条条看完,别跳过。
 - 截 HTML 那一侧做对比时注意:`.fragment` 默认隐藏,`#n` 深链截出来会缺内容;
   pptx 一律按**全部显现**导出,这不是 bug。

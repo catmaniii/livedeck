@@ -46,6 +46,25 @@
     return { hex: hex, a: a };
   }
 
+  // pptxgenjs 不支持渐变填充。不处理的话:不出形状 → 白字落白底 → **整条隐形**,
+  // 而且毫无提示。压平成各色标的平均色,并报 warning 让人自己决定要不要改设计。
+  function flattenGradient(bgImage) {
+    if (!bgImage || bgImage.indexOf('gradient(') < 0) return null;
+    var stops = bgImage.match(/rgba?\([^)]+\)/g);
+    if (!stops || !stops.length) return null;
+    var r = 0, g = 0, b = 0, n = 0;
+    for (var i = 0; i < stops.length; i++) {
+      var p = stops[i].replace(/rgba?\(|\)/g, '').split(',').map(parseFloat);
+      var a = p.length > 3 ? p[3] : 1;
+      if (a <= EPS) continue;           // 透明色标不参与平均
+      r += p[0]; g += p[1]; b += p[2]; n++;
+    }
+    if (!n) return null;
+    return [r / n, g / n, b / n].map(function (c) {
+      return ('0' + Math.round(c).toString(16)).slice(-2);
+    }).join('').toUpperCase();
+  }
+
   function union(a, b) {
     if (!b || (b.width <= 0 && b.height <= 0)) return a;
     if (!a) return { left: b.left, top: b.top, right: b.right, bottom: b.bottom };
@@ -102,8 +121,11 @@
     return has ? r : null;
   }
 
-  // 富文本:按直接子节点顺序切 run,<br> 落成 breakLine
-  function runsOf(el, baseCs) {
+  // 富文本:递归收集 run。
+  // 递归而非只看一层,是为了 <b><span style="color:..">x</span></b> 这种嵌套不丢样式;
+  // 表格单元格尤其需要(格内彩色 ✓/✗ 全靠它)。
+  function collectRuns(el, opts) {
+    opts = opts || {};
     var runs = [];
     function push(text, cs, br) {
       text = applyTransform(text.replace(/\s+/g, ' '), cs);
@@ -119,29 +141,46 @@
         breakLine: !!br
       });
     }
-    for (var i = 0; i < el.childNodes.length; i++) {
-      var n = el.childNodes[i];
-      if (n.nodeType === 3) {
-        push(n.nodeValue, baseCs, false);
-      } else if (n.nodeType === 1) {
+    (function rec(node) {
+      for (var i = 0; i < node.childNodes.length; i++) {
+        var n = node.childNodes[i];
+        if (n.nodeType === 3) { push(n.nodeValue, getComputedStyle(node), false); continue; }
+        if (n.nodeType !== 1) continue;
         if (REPLACED[n.tagName.toUpperCase()]) continue;
-        var cs = getComputedStyle(n);
         if (n.tagName === 'BR') {
-          if (runs.length) runs[runs.length - 1].breakLine = true;
-          else push('', baseCs, true);
+          if (runs.length) runs[runs.length - 1].breakLine = true; else push('', getComputedStyle(node), true);
           continue;
         }
-        if (!INLINE[cs.display]) continue;
-        if (!n.textContent.replace(/\s/g, '')) continue;
-        push(n.textContent, cs, false);
+        var cs = getComputedStyle(n);
+        if (!visible(n, cs)) continue;
+        var block = !INLINE[cs.display];
+        // 常规文本条目:块级子元素自己会成为独立条目,这里不收
+        if (block && !opts.acrossBlocks) continue;
+        if (block && runs.length) runs[runs.length - 1].breakLine = true;
+        rec(n);
       }
-    }
-    // 合并首尾空白
+    })(el);
     if (runs.length) {
       runs[0].text = runs[0].text.replace(/^\s+/, '');
       runs[runs.length - 1].text = runs[runs.length - 1].text.replace(/\s+$/, '');
     }
     return runs.filter(function (r) { return r.text.length || r.breakLine; });
+  }
+
+  // 一个元素的文字一旦被祖先的 runs 收走,它自己就不能再出一个文本框 ——
+  // 否则 <p>要同时满足<b>结论经过验证</b>…</p> 会出两个框叠在同一位置,字糊成一团。
+  function markConsumed(el, set) {
+    for (var i = 0; i < el.childNodes.length; i++) {
+      var n = el.childNodes[i];
+      if (n.nodeType !== 1) continue;
+      if (REPLACED[n.tagName.toUpperCase()]) continue;
+      var cs = getComputedStyle(n);
+      if (!INLINE[cs.display]) continue;
+      if (!n.textContent.replace(/\s/g, '')) continue;
+      set.add(n);
+      var all = n.getElementsByTagName('*');
+      for (var k = 0; k < all.length; k++) set.add(all[k]);
+    }
   }
 
   /* ---------- 3. 形状:背景 / 边框 / 单边强调条 ---------- */
@@ -158,6 +197,14 @@
     };
     var sides = ['t', 'r', 'b', 'l'].filter(function (s) { return bw[s] > 0.4 && bc[s].a > EPS; });
     var hasBg = bg.a > EPS;
+
+    var grad = flattenGradient(cs.backgroundImage);
+    if (grad) {
+      bg = { hex: grad, a: 1 };
+      hasBg = true;
+      warn.push(sel(el) + ' 的渐变背景已压平为单色 #' + grad + '(pptx 不支持渐变填充)');
+    }
+
     if (!hasBg && !sides.length) return out;
 
     var radius = Math.max(
@@ -268,6 +315,7 @@
         }
         var col = rgb(cs.color);
         row.push({
+          runs: collectRuns(td, { acrossBlocks: true }),   // 格内彩色 ✓/✗ 靠这个保住
           text: applyTransform(td.textContent.replace(/\s+/g, ' ').trim(), cs),
           bold: num(cs.fontWeight) >= 600 || cs.fontWeight === 'bold',
           color: col.hex,
@@ -308,6 +356,7 @@
   function walkSlide(slide, si) {
     var origin = slide.getBoundingClientRect();
     var items = [], warn = [];
+    var consumed = new Set();   // 文字已被祖先 runs 收走的元素
 
     (function walk(el) {
       var cs = getComputedStyle(el);
@@ -347,6 +396,11 @@
         return;
       }
 
+      // transform 不映射,而且是静默差异 —— 图章、斜标签在 pptx 里会变正
+      if (cs.transform && cs.transform !== 'none' && el.textContent.replace(/\s/g, '')) {
+        warn.push(sel(el) + ' 带 transform(' + cs.transform.slice(0, 28) + '…),pptx 不映射,已按未变换绘制');
+      }
+
       // 背景 / 边框 / 强调条 / 伪元素
       if (rect.width > 0 && rect.height > 0) {
         shapeOf(el, cs, rect, origin, warn).forEach(function (s) { items.push(s); });
@@ -354,10 +408,11 @@
       }
 
       // 文本(量的是字的真实外框)
-      var tg = textGeom(el);
+      var tg = consumed.has(el) ? null : textGeom(el);
       if (tg) {
-        var runs = runsOf(el, cs);
+        var runs = collectRuns(el);
         if (runs.length) {
+          markConsumed(el, consumed);
           // 内容盒左右边界。文本框宽度不能只取"字的外框":一段会换行的文字,
           // 字外框 = 最宽那一行 ≤ 容器宽,直接拿去当 pptx 文本框会**比 HTML 更早换行**,
           // 行数变多就往下溢出。所以块级元素向右补齐到内容盒右边缘。
@@ -390,6 +445,11 @@
           ' 设计框(x=' + Math.round(it.x) + ' y=' + Math.round(it.y) +
           ' w=' + Math.round(it.w) + ' h=' + Math.round(it.h) + ')');
       }
+    });
+
+    // 统一补页号:shapeOf / pseudoOf 里报的 warning 不知道自己在第几页
+    warn = warn.map(function (w) {
+      return w.indexOf('第 ') === 0 ? w : '第 ' + (si + 1) + ' 页 ' + w;
     });
 
     var sbg = rgb(getComputedStyle(slide).backgroundColor);

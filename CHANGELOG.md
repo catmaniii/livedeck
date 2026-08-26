@@ -3,6 +3,53 @@
 本文件记录 livedeck 的显著变更。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 仓库尚未打 tag,版本号按发布日期归档。
 
+## [0.2.1] — 2026-08-26
+
+拿一份真实的 15 页 deck(含 5 个内联 `<svg>`、4 个 iframe、4 张表)跑 `html2pptx.js`,
+逐页与 HTML 原件比对。改完:`p:sp=250  p:pic=5  p:graphicFrame=4  a:t=485`。
+下面每一条都是这轮比对撞出来的,自带模板测不出来。
+
+### 修复
+
+- **srcdoc 里的 `</body>` 让注入落进 iframe**(整份 deck 直接转不了)。
+  交付形态会把被嵌演示内联进 `srcdoc`,那些 HTML 自带 `</body>`,在属性里是字面文本 ——
+  实测该 deck 有 4 个 `</body>`,注入第一个等于把量版脚本塞进了第一个 iframe。
+  改为注入**最后一个**。
+
+- **行内元素的文字被抽两遍,叠在同一位置糊成一团**。
+  `<p>要同时满足<b>结论经过验证</b>…</p>`:父段落的 runs 已经含 `<b>`,walk 又下钻到 `<b>`
+  单独出一个文本框。加 `consumed` 集合,文字被祖先收走的元素不再自己出框。
+  实测该 deck 文本框数 248 → 136。
+
+- **z 序错误:行内高亮背景盖住文字**。
+  文档序里 `<span>` 的背景排在父段落文字**之后**,照原序写就把已画好的字盖掉
+  (HTML 里背景永远在文字之下)。改为分层输出:形状 → 图片 → 表格/占位 → 文字,层内保持文档序。
+
+- **渐变背景静默丢失,导致白字落白底、整块隐形**。
+  `background:linear-gradient(...)` 时 `backgroundColor` 是透明,不出形状;该 deck 的两条深色
+  面板标题栏因此整条消失。改为**压平成各色标的平均色**并报 warning。
+
+- **内联 `<svg>` 的 PNG 兜底是假的**。pptxgenjs 在 Node 里没有栅格化能力,走 `addImage(*.svg)`
+  时会按 OOXML 惯例占"PNG 兜底 + SVG"两个 part,却把**同一份 SVG 字节原样写进那个 `.png`**
+  —— 实测两份文件字节完全相同、都以 `<svg viewBox=` 开头,等于交出一个声明 `image/png`、
+  内容是 SVG 的 part。靠它渲染的阅读器会画歪(LibreOffice 实测流程图叠字)。
+  改为**自己用 Chrome 栅格化成 3× 真 PNG**;想保留矢量传 `--svg=embed`。
+
+- **表格单元格被压成单一样式**,格内彩色 ✓/✗ 全变同色。改用递归 runs,单元格支持富文本。
+
+### 新增
+
+- `--svg=raster|embed`(默认 `raster`)。
+- `--dumpjson=<file>` —— 把量出来的中间数据落盘,能直接看到每个条目的 `sel` / 坐标 / runs,排查用。
+- `transform` 告警 —— `rotate`/`skew` 不映射,是静默差异(斜着的图章在 pptx 里会变正),现在会报出来。
+- warning 统一补页号(此前 `shapeOf` / `pseudoOf` 报的那几条不知道自己在第几页)。
+
+### 已知边界(新增)
+
+- `transform: rotate / skew` 不映射,按未变换绘制,有告警。
+- 渐变一律压平为单色,有告警。
+- SVG 默认栅格化,失去矢量缩放;要矢量就得接受上面那个假 PNG 兜底。
+
 ## [0.2.0] — 2026-08-26
 
 把 HTML deck 接上了 `.pptx` 这条出口。在此之前 livedeck 的 HTML 是**终态产物**,想要 `.pptx` 只能另起炉灶;
