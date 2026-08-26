@@ -5,7 +5,8 @@ description: >-
   HTML 演示(动画 / 可交互图谱图表 / 实时组件 / 视频),靠 <iframe> 实现 —— 用于 .pptx 装不下动态
   内容、又想要 PPT 式放映体验的场合。本 skill 是 Anthropic 官方 pptx skill 的**配套扩展层**,不是独立
   自足的 skill:它自己提供 HTML deck 的模板 / 放映引擎 / 浏览器截图 QA,但源素材摄取、初稿与设计、视觉 QA
-  方法论仍依赖 pptx skill,应与其配套使用。需要真正的 .pptx 文件时直接用 pptx skill。
+  方法论仍依赖 pptx skill,应与其配套使用。也可用自带的 scripts/html2pptx.js 把 deck 转成**文本框可编辑**的 .pptx
+  (逐元素映射,不是截图)。
 ---
 
 # LiveDeck — 可翻页 + 内嵌动态演示的 HTML 演示文稿
@@ -31,8 +32,11 @@ HTML deck,而不是 .pptx。PPTX 无法嵌入活的 HTML;HTML deck 天生可以(
   改完再验"这套纪律,均以 pptx skill 的 `SKILL.md` 为准。
 
 **边界**:纯粹"把已写好的 HTML 渲染成可翻页 deck 并内嵌演示",可只用本 skill、不调 pptx 脚本;但只要涉及
-**导入素材、出结构初稿、或走完整设计 / QA 纪律**,就需要 pptx skill 在场。需要真正的 `.pptx` 产物时直接
-用 pptx skill。
+**导入素材、出结构初稿、或走完整设计 / QA 纪律**,就需要 pptx skill 在场。
+
+**从零做一份 .pptx** 仍然直接用 pptx skill 的 `pptxgenjs`。但**已经有 HTML deck、想要一份可编辑 .pptx**
+时,用本 skill 自带的 `scripts/html2pptx.js`(见下「转 pptx」)—— 它只依赖 Chrome + `pptxgenjs`,
+**不调用 pptx skill 的任何脚本**。pptx skill 是第三方 skill,改它的文件会在下次更新时被覆盖。
 
 ## 什么时候用它
 
@@ -94,6 +98,82 @@ HTML deck,而不是 .pptx。PPTX 无法嵌入活的 HTML;HTML deck 天生可以(
     --screenshot=out.png "file:///abs/path/deck.html#6"
   ```
   截图偏暗多半是上面两条铁律没遵守。
+
+## 转 pptx(可编辑,不是截图)
+
+```bash
+node ~/.claude/skills/livedeck/scripts/html2pptx.js deck.html out.pptx
+```
+
+逐元素映射:文字 → `addText`、背景/边框 → `addShape`、`<table>` → `addTable`。产物里**没有 `<p:pic>`**
+(除非 deck 里真有 `<img>` / `<svg>`),每个文本框在 PowerPoint 里双击就能改。
+
+**为什么不能截图**:pptx 里只有两种东西 —— `<p:sp>`(形状 / 文本框,可编辑)和 `<p:pic>`(图片,不可编辑)。
+截图、整页转 SVG、把 SVG 塞进 `addImage`,**统统落成 `<p:pic>`**。SVG 也不例外:PowerPoint 虽然能渲染 SVG,
+但它在 OOXML 里仍然是图片;右键"转换为形状"是手动的、逐张的,还常打散字体。要可编辑就只能逐元素映射。
+
+**坐标从哪来**:livedeck 用 grid / flex / 普通流,**源码里没有坐标**;OOXML 却要求每个 shape 都有绝对
+x/y/w/h。所以先让无头 Chrome 排完版,再注入 `scripts/measure.js`,用 `getBoundingClientRect` +
+`getComputedStyle` 把版量出来。好在设计框与 pptx 幅面是精确整数倍,换算零误差:
+
+```
+1280 / 10"    = 128     →  1 px = 1/128 inch
+ 720 / 5.625" = 128     →  字号 1 px = 0.5625 pt(72/128)
+```
+
+参数:`--slack=8`(多行文本的换行富余量,px)、`--font="微软雅黑"`(强制统一字体)、
+`--chrome=<path>`、`--keep`(保留注入后的临时 HTML 便于排查)。
+
+### pptx 兼容子集(想要可编辑就得守)
+
+deck 照常写,但**打算转 pptx 的页**避开下面这些 —— 它们在 OOXML 里没有对应物,只能丢掉或退化成图片:
+
+| 别用 | 原因 / 替代 |
+|---|---|
+| `box-shadow`、`filter`、`backdrop-filter`、`mix-blend-mode` | 不映射,直接丢 |
+| CSS 渐变背景(`linear-gradient` 等) | pptxgenjs 不支持渐变填充;要渐变就放一张渐变图 |
+| `::before` / `::after` 里放**文字** | 伪元素没有 DOM 节点,量不到。只有 flex 容器里**带固定宽高和背景的装饰条**(如 `.kicker::before`)被支持,其余记 warning 跳过 |
+| 自定义 web font(`@font-face`) | pptx 不内嵌字体,到别人机器上会被替换;用系统字体栈 |
+| `transform: rotate / skew` | 不映射 |
+| `position:sticky`、滚动容器 | 幻灯片没有滚动这个概念 |
+| **把文字画进 `<svg>` 里** | 整块变图片,改字得回头改 HTML。见下方降级三层 |
+
+另外两条会**静默变形**,要特别知道:
+
+- **被 `overflow:hidden` 遮住的溢出**,在 pptx 里会真的被裁掉。转换器已加出框检查,超出 1280×720 一律报
+  warning —— 别忽略。
+- **浏览器里只有一行的文字,转换时会被设成"禁止换行"**。因为 PowerPoint 的字体度量只要比 Chrome 宽一点点
+  就会折出第二行,实测模板页脚正是这样被折断并切出页底的。副作用是那行字在 pptx 里可以越出自己的框,
+  这是有意为之。
+
+### 动态内容的三层降级(转 pptx 前先想清楚)
+
+1. **带文字的示意图(方框 + 箭头 + 标签)—— 别画 SVG,用 HTML 元素拼。**
+   `div` + 背景色 + 边框 + 文字,转过去就是 `addShape` + `addText`,**在 pptx 里完全可编辑**。
+   模板的 `bars`(纯 CSS 条形图)就是这么做的,零特殊处理就能转。
+2. **mermaid / 外部渲染图 —— 只能是图片。**
+   所以**凡是需要在 pptx 里改字的图,就不要用 mermaid**;否则改一行标签要重跑整条渲染链。
+3. **iframe 里的活演示 / 视频 / 可交互组件 —— pptx 物理上装不下。**
+   这正是 livedeck 存在的理由。转换器会降级成一个虚线占位框 + 文件名并报 warning;
+   要么接受占位,要么自己截一张静帧放上去。
+
+### 转完必须做的 QA
+
+`html2pptx.js` 的第一遍产物基本不会全对,当成找 bug:
+
+```bash
+soffice --headless --convert-to pdf out.pptx --outdir .
+pdftoppm -jpeg -r 150 out.pdf slide          # 或用 PyMuPDF 逐页出图
+```
+
+逐页比对 HTML 原件与 pptx 渲染,重点查:
+
+- 文字有没有**多折一行**或被裁(字体度量差异的典型症状)。
+- 卡片 / 色块的位置、圆角、单边强调条对不对。
+- 表格列宽、表头底色、隔行浅底;**圆角表头在 pptx 里会变直角**,已知损失。
+- 控制台那几条 warning 一条条看完,别跳过。
+- 截 HTML 那一侧做对比时注意:`.fragment` 默认隐藏,`#n` 深链截出来会缺内容;
+  pptx 一律按**全部显现**导出,这不是 bug。
 
 ## 结构速查
 
