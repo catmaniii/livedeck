@@ -12,6 +12,7 @@
   (`kicker` / `card` / `cols` / `table.grid` / `bars` / `chip` / `demo-wrap`)。
 - `scripts/html2pptx.js` —— 把 deck 转成**文本框可编辑**的 `.pptx`(见下)。
 - `scripts/measure.js` —— 注入页面的量版脚本,由上面那个调用。
+- `scripts/force_theme.py` —— 内联被嵌 HTML 时把它的配色**钉死**成 deck 指定的主题(见下)。
 - `CHANGELOG.md` —— 版本变更记录。
 
 ## 用法
@@ -35,6 +36,24 @@ pptx 里只有 `<p:sp>`(形状 / 文本框,可编辑)和 `<p:pic>`(图片,不可
 
 只依赖 Chrome/Edge + `npm i -g pptxgenjs`,**不调用 pptx skill 的任何脚本**。
 能转到什么程度、哪些 CSS 不能用、动态内容怎么降级,见 `SKILL.md` 的「转 pptx」一节。
+
+## 配色由 deck 决定,不跟随观众的系统
+
+演示文稿的配色是**设计决定** —— 没有哪份 PPT 的颜色该随观众机器的深色 / 浅色设置变。
+现成的可视化页却常是**深色优先**写法,而且主题多半**由 JS 算**(`matchMedia` 跟随系统、
+`localStorage` 跟随上次点过的按钮),内联进 deck 后在深色系统上整块变黑。
+
+```python
+import os, sys
+sys.path.insert(0, os.path.expanduser("~/.claude/skills/livedeck/scripts"))
+from force_theme import force_theme
+
+raw = force_theme(open("demo.html", encoding="utf-8").read(), "light")
+```
+
+三管齐下:CSS 拆媒体查询 + 在页面自己的脚本之前钉 `data-theme` + 接管 `matchMedia` 与
+`Storage.getItem`。**只改 CSS 按不住**。验证必须在**强制深色**下截图量亮度(浅色系统上验不出来),
+细节见 `SKILL.md`。
 
 ## 与官方 pptx skill 的关系(配套扩展,非独立自足)
 

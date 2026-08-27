@@ -58,33 +58,17 @@ HTML deck,而不是 .pptx。PPTX 无法嵌入活的 HTML;HTML deck 天生可以(
      文件**,拷走 / 预览都能动。转义只需两步(顺序别反):`&`→`&amp;`,再 `"`→`&quot;`。可用脚本
      一键把 `src="x.html"` 换成 `srcdoc="…"`:
      ```python
-     import re
+     import os, sys                                 # 注意:Python 不展开 ~,必须 expanduser
+     sys.path.insert(0, os.path.expanduser("~/.claude/skills/livedeck/scripts"))
+     from force_theme import force_theme            # 配色由 deck 决定,不由被嵌页决定
 
-     def force_light(html):
-         """把被嵌页钉在 deck 的配色上,不让它跟随观众的系统设置。
-         light 分支拆出媒体查询无条件生效;dark 分支整块删。"""
-         def brace_end(t, i):                       # i 指向 '{',返回配对 '}' 的下标
-             d = 0
-             while i < len(t):
-                 d += (t[i] == '{') - (t[i] == '}')
-                 if d == 0: return i
-                 i += 1
-             raise ValueError('CSS 花括号不配对')
-         for kind in ('light', 'dark'):
-             while True:
-                 k = html.find('prefers-color-scheme: ' + kind)
-                 if k < 0: break
-                 at = html.rfind('@media', 0, k)
-                 if at < 0: break
-                 br = html.index('{', k); end = brace_end(html, br)
-                 keep = html[br+1:end] if kind == 'light' else ''
-                 html = html[:at] + keep + html[end+1:]
-         return html
-
-     raw = force_light(open("x.html", encoding="utf-8").read())
+     raw = force_theme(open("x.html", encoding="utf-8").read(), "light")
      esc = raw.replace("&", "&amp;").replace('"', "&quot;")    # 顺序别反
      deck = deck.replace('src="x.html"', 'srcdoc="%s"' % esc)
      ```
+     `scripts/force_theme.py` 三管齐下(CSS 拆媒体查询 + DOM 钉 `data-theme` + 接管 `matchMedia`
+     与 `localStorage`),因为**被嵌页的主题多半是 JS 算出来的,只改 CSS 按不住** —— 见下方
+     「被嵌页的深色优先陷阱」。
      **验证**:`chrome --headless --force-dark-mode --screenshot=…` 截一张,量 iframe 区平均亮度,
      应 >170/255。只在浅色系统上看是**验不出来**这个问题的。
      被嵌文件自身要**自包含**(自带 CSS/JS、数据内联,不引外链),srcdoc 里 `?query` / 拖拽 / `fetch`
@@ -109,12 +93,24 @@ HTML deck,而不是 .pptx。PPTX 无法嵌入活的 HTML;HTML deck 天生可以(
   `#stage` 宽高和 JS `fit()` 里的 `1280/720`。
 - **自包含优先**:字体用系统字体栈;图表用纯 CSS/SVG(模板的 `bars` 即纯 CSS);要嵌的演示文件跟
   deck 放一起、相对路径引用,别引外链(离线 / 内网要能开)。
-- **被嵌页的深色优先陷阱(声明 `color-scheme` 救不了)**:很多现成的可视化页是**深色优先**写法 ——
-  基础 `:root` 放深色变量,浅色只写在 `@media (prefers-color-scheme: light)` 里。观众系统处于深色时
-  媒体查询**不匹配**,整块 iframe 就变深,和四周的白色幻灯片撞在一起。
-  **`color-scheme` 管不着它** —— 颜色是 CSS 变量给的,不是 UA 给的。
-  处置:内联时把 light 分支**拆出媒体查询外壳无条件生效**(它在深色基底之后,按源码顺序胜出),
-  dark 分支整块删掉。代码见「怎么做」第 4 条。
+- **被嵌页的深色优先陷阱(声明 `color-scheme` 救不了,只改 CSS 也救不了)**:现成的可视化页常是
+  **深色优先**写法,而且主题往往**由 JS 决定**,有两条独立来源:
+  1. **CSS** —— 基础 `:root` 放深色变量,浅色只写在 `@media (prefers-color-scheme: light)` 里;
+     观众系统处于深色时媒体查询**不匹配**,整块 iframe 变深。`color-scheme` 管不着 ——
+     颜色是 CSS 变量给的,不是 UA 给的。
+  2. **JS** —— `matchMedia("(prefers-color-scheme: dark)").matches` 跟随系统、
+     `localStorage.getItem("…theme")` 跟随上次点过的按钮,然后把 `data-theme` 写回 `<html>`。
+     **只拆 `@media` 完全按不住这条**:两个真实被嵌页在深色系统下实测 29/255、10/255,全黑。
+  处置:用 `scripts/force_theme.py`,三管齐下 —— light 分支拆出媒体查询无条件生效、dark 分支整块删;
+  在页面自己的脚本**之前**注入 shim 钉死 `data-theme`;接管 `matchMedia` 与 `Storage.getItem`,
+  让页面自己那套逻辑算出来的结果就是 deck 指定的主题。
+- **改被嵌页的 CSS 时,别用「找到关键字再往前 `rfind('@media')`」。** JS 里的
+  `matchMedia("(prefers-color-scheme: dark)")` 不在任何 `@media` 里,`rfind` 会命中很靠前的一个真
+  `@media`,把中间**整段代码**删掉 —— 实测把 122KB 的页削到 40KB、入口函数消失。而且它**不报错**,
+  页面照样打开、只是空白,只有看截图才发现。正确做法:只在 `<style>` 块内解析,且只认真正的
+  `@media` 前奏(`force_theme.py` 已经这么做)。
+- **注入 shim 别用 `replace("</head>", …)`。** 很多手写的可视化页**根本没有 `</head>`**,
+  这一句会静默无效。按 `<head …>` → `<html …>` → 文首 退化着注入。
 - **iframe 内容各自独立**:它有自己的键盘 / 滚轮交互时,焦点在 iframe 内时方向键归它、不翻页
   (点幻灯片空白处夺回焦点即可)。
 
@@ -124,6 +120,25 @@ HTML deck,而不是 .pptx。PPTX 无法嵌入活的 HTML;HTML deck 天生可以(
 
 - 深色系统主题下白底是否被压暗(漏了 color-scheme 的典型症状)。
 - **深色系统下逐个 iframe 看有没有变深** —— 被嵌页深色优先时,只有这一步能发现。
+  在浅色系统上是**验不出来**的,必须强制深色再量:
+  ```bash
+  # 注意是 file:/// URL,不是裸路径 —— 见下面第 2 条
+  chrome --headless --disable-gpu --force-dark-mode --window-size=1280,720          --virtual-time-budget=6000 --screenshot=dk.png "file:///C:/tmp/deck.html#8"
+  python -c "
+  from PIL import Image, ImageStat
+  im = Image.open('dk.png').convert('RGB')
+  print(ImageStat.Stat(im.convert('L')).mean[0], sorted(im.getcolors(3*10**5), reverse=True)[0][1])"
+  ```
+  整页平均亮度应 **>170/255**;低于这个数就去逐个 iframe 找哪个没被钉住。
+  **只截第 1 页不算验过** —— iframe 通常不在首页,要用 `#n` 逐个截有 iframe 的那几页。
+
+  这一步有两个会让你**读到假结果**的坑,都踩过,症状一模一样(全黑),但和主题无关:
+  1. **路径含中文** → Chrome `ERR_FILE_NOT_FOUND`。先拷成 ASCII 文件名再截。
+  2. **`#n` 必须走 `file:///` URL**。传裸路径时 `deck.html#8` 会被当成**文件名的一部分**,
+     同样是加载失败。
+  两种情况你量到的都是 **Chrome 自己那张深色错误页**,会误判成"被嵌页没钉住"。
+  **判别方法:看主色,不要只看均值** —— 错误页的主色是 `(32,33,36)` 且占满九成以上像素;
+  真正渲染出来的幻灯片主色是接近白的底色。多页测出**完全相同**的亮度值,也是这个信号。
 - 每页有没有溢出 / 被裁(内容超 1280×720 设计框)、字号对比是否够。
 - iframe 演示能否加载、可交互是否正常、相对路径对不对。
 - 方向键 / 空格 / Home / End / 全屏 / `#n` 深链是否都工作。
