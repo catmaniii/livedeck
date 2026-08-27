@@ -58,9 +58,35 @@ HTML deck,而不是 .pptx。PPTX 无法嵌入活的 HTML;HTML deck 天生可以(
      文件**,拷走 / 预览都能动。转义只需两步(顺序别反):`&`→`&amp;`,再 `"`→`&quot;`。可用脚本
      一键把 `src="x.html"` 换成 `srcdoc="…"`:
      ```python
-     esc=open("x.html",encoding="utf-8").read().replace("&","&amp;").replace('"',"&quot;")
-     deck=deck.replace('src="x.html"', 'srcdoc="%s"'%esc)
+     import re
+
+     def force_light(html):
+         """把被嵌页钉在 deck 的配色上,不让它跟随观众的系统设置。
+         light 分支拆出媒体查询无条件生效;dark 分支整块删。"""
+         def brace_end(t, i):                       # i 指向 '{',返回配对 '}' 的下标
+             d = 0
+             while i < len(t):
+                 d += (t[i] == '{') - (t[i] == '}')
+                 if d == 0: return i
+                 i += 1
+             raise ValueError('CSS 花括号不配对')
+         for kind in ('light', 'dark'):
+             while True:
+                 k = html.find('prefers-color-scheme: ' + kind)
+                 if k < 0: break
+                 at = html.rfind('@media', 0, k)
+                 if at < 0: break
+                 br = html.index('{', k); end = brace_end(html, br)
+                 keep = html[br+1:end] if kind == 'light' else ''
+                 html = html[:at] + keep + html[end+1:]
+         return html
+
+     raw = force_light(open("x.html", encoding="utf-8").read())
+     esc = raw.replace("&", "&amp;").replace('"', "&quot;")    # 顺序别反
+     deck = deck.replace('src="x.html"', 'srcdoc="%s"' % esc)
      ```
+     **验证**:`chrome --headless --force-dark-mode --screenshot=…` 截一张,量 iframe 区平均亮度,
+     应 >170/255。只在浅色系统上看是**验不出来**这个问题的。
      被嵌文件自身要**自包含**(自带 CSS/JS、数据内联,不引外链),srcdoc 里 `?query` / 拖拽 / `fetch`
      相对路径都不可用。
 5. 用浏览器打开验收(见下 QA)。
@@ -73,22 +99,31 @@ HTML deck,而不是 .pptx。PPTX 无法嵌入活的 HTML;HTML deck 天生可以(
 
 ## 铁律 / 常见坑(务必遵守)
 
-- **必须声明 `color-scheme: light`**(`<meta>` + `:root` 两处都留)。否则浏览器 / 系统处于深色模式时,
-  **auto-dark-mode 会把白色幻灯片整体压暗**成灰。想更硬的 opt-out 用 `only light`。模板已内置。
+- **配色跟随上一层,不跟随系统。** 演示文稿的配色是**设计决定**,没有哪份 PPT 的颜色是随观众机器的
+  系统设置变的。deck 自己必须声明 `color-scheme: light`(`<meta>` + `:root` 两处都留,想更硬用
+  `only light`),否则深色模式下 **auto-dark-mode 会把白色幻灯片整体压暗**成灰。模板已内置。
+  **被嵌的演示同样要钉死 —— 而且光声明 `color-scheme` 往往不够,见下方「被嵌页的深色优先陷阱」。**
 - **入场动画只动 `transform`、不要从 `opacity:0` 开始**。个别环境(如无头截图、动画时钟不推进)会让
   幻灯片卡在透明 → 看起来全黑。模板已改成只滑入。
 - **固定设计尺寸 1280×720**,JS 等比缩放铺满视口(letterbox)。想改 16:10 / 4:3 就同时改 CSS 里
   `#stage` 宽高和 JS `fit()` 里的 `1280/720`。
 - **自包含优先**:字体用系统字体栈;图表用纯 CSS/SVG(模板的 `bars` 即纯 CSS);要嵌的演示文件跟
   deck 放一起、相对路径引用,别引外链(离线 / 内网要能开)。
-- **iframe 内容各自独立**:被嵌的演示自己也要遵守 color-scheme 等规则;它有自己的键盘 / 滚轮交互时,
-  焦点在 iframe 内时方向键归它、不翻页(点幻灯片空白处夺回焦点即可)。
+- **被嵌页的深色优先陷阱(声明 `color-scheme` 救不了)**:很多现成的可视化页是**深色优先**写法 ——
+  基础 `:root` 放深色变量,浅色只写在 `@media (prefers-color-scheme: light)` 里。观众系统处于深色时
+  媒体查询**不匹配**,整块 iframe 就变深,和四周的白色幻灯片撞在一起。
+  **`color-scheme` 管不着它** —— 颜色是 CSS 变量给的,不是 UA 给的。
+  处置:内联时把 light 分支**拆出媒体查询外壳无条件生效**(它在深色基底之后,按源码顺序胜出),
+  dark 分支整块删掉。代码见「怎么做」第 4 条。
+- **iframe 内容各自独立**:它有自己的键盘 / 滚轮交互时,焦点在 iframe 内时方向键归它、不翻页
+  (点幻灯片空白处夺回焦点即可)。
 
 ## QA(必做,当成找 bug)
 
 在浏览器里逐页翻一遍,重点查:
 
 - 深色系统主题下白底是否被压暗(漏了 color-scheme 的典型症状)。
+- **深色系统下逐个 iframe 看有没有变深** —— 被嵌页深色优先时,只有这一步能发现。
 - 每页有没有溢出 / 被裁(内容超 1280×720 设计框)、字号对比是否够。
 - iframe 演示能否加载、可交互是否正常、相对路径对不对。
 - 方向键 / 空格 / Home / End / 全屏 / `#n` 深链是否都工作。
